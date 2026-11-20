@@ -90,7 +90,7 @@ function headOf(man) { const n = neckOf(man); return { x: n.x, y: n.y - BODY.hea
 // Where the drawing hand rests when it has nothing to do
 function restHand(man) {
   const s = shoulderOf(man);
-  return { x: s.x + man.facing * 20, y: s.y + 250 };
+  return { x: s.x + man.facing * 18, y: s.y + 195 };
 }
 
 /*
