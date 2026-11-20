@@ -51,7 +51,12 @@ button:active { transform: translateY(1px); }
 .chip { min-width: 44px; font-weight: 700; }
 .chip.selected { background: #2f5d3a; color: #fff; border-color: #2f5d3a; }
 
-.status { margin: 8px 0 0; font-size: 0.95rem; color: #2f5d3a; min-height: 1.2em; }
+.chip.previous { border: 2px dashed #2f5d3a; }
+
+.status-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 8px; }
+.status { margin: 0; font-size: 0.95rem; color: #2f5d3a; min-height: 1.2em; }
+.stop { background: #fbe9e7; border-color: #e0a99f; color: #8a2b1d; font-weight: 600; }
+.stop:hover { background: #f6d5d0; }
 
 @media (max-width: 600px) {
   .row { flex-direction: column; gap: 6px; }

@@ -30,7 +30,11 @@ ctx.scale(dpr, dpr);
 const FLOOR_Y = 530;
 const BOARD = { x: 70, y: 30, w: 860, h: 340 };
 const COLS = [180, 340, 500, 660, 820];
-const ROWS = [130, 270];
+const ROWS = [110, 225];
+const EQUATION_Y = 322;  // line at the bottom of the board where sums are written
+const CHALK_FONT = "bold 64px 'Comic Sans MS', 'Chalkboard SE', 'Segoe Print', cursive";
+const EQUATION_FONT = "bold 46px 'Comic Sans MS', 'Chalkboard SE', 'Segoe Print', cursive";
+const POINTER_LEN = 50;  // length of the teacher's pointer stick
 
 // Stickman body proportions (in pixels)
 const BODY = {
@@ -51,9 +55,12 @@ const CHALK_SPEED = 420; // px per second while drawing with chalk
 const state = {
   numbers: [],       // [{ value, x, y }]
   selected: 0,       // index into numbers
+  previous: 1,       // the number picked before `selected` (used by Sum)
   marks: [],         // chalk marks drawn on the board
   queue: [],         // steps waiting to run
   step: null,        // step currently running
+  pending: 0,        // how many button actions are queued or running
+  statusText: "Ready",
   man: {
     x: 520,          // x of the feet
     facing: 1,       // 1 = facing right, -1 = facing left
@@ -61,6 +68,7 @@ const state = {
     moving: false,
     hand: null,      // current hand position {x, y} (null until first frame)
     handTarget: null,// where the hand is heading (null = relaxed by the side)
+    pointer: null,   // number the pointer stick is aimed at (null = no stick)
     bubble: null,    // { text, until }
   },
   time: 0,
@@ -127,6 +135,7 @@ function makeNumbers(values) {
     y: ROWS[Math.floor(i / COLS.length)],
   }));
   state.selected = 0;
+  state.previous = 1;
   renderChips();
 }
 
@@ -161,17 +170,22 @@ function line(from, to, steps = 14) {
   return pts;
 }
 
+// Hand-drawn ellipse: a bit more than a full turn, slightly growing, like a real chalk circle
+function ellipseStroke(c, rx, ry) {
+  const pts = [];
+  const start = -2.3;
+  const turns = Math.PI * 2 * 1.08;
+  for (let i = 0; i <= 70; i++) {
+    const a = start + (turns * i) / 70;
+    const grow = 1 + i / 700;
+    pts.push(jitter({ x: c.x + Math.cos(a) * rx * grow, y: c.y + Math.sin(a) * ry * grow }));
+  }
+  return pts;
+}
+
 const SHAPES = {
   circle(c) {
-    const pts = [];
-    const start = -2.3;
-    const turns = Math.PI * 2 * 1.08; // a bit more than a full turn, like a real hand-drawn circle
-    for (let i = 0; i <= 70; i++) {
-      const a = start + (turns * i) / 70;
-      const grow = 1 + i / 700;
-      pts.push(jitter({ x: c.x + Math.cos(a) * 46 * grow, y: c.y + Math.sin(a) * 42 * grow }));
-    }
-    return [pts];
+    return [ellipseStroke(c, 46, 42)];
   },
   underline(c) {
     return [line({ x: c.x - 38, y: c.y + 40 }, { x: c.x + 38, y: c.y + 43 })];
@@ -219,8 +233,9 @@ function createMark(shape, n) {
 // ---------------------------------------------------------------------------
 const steps = {
   walkTo: (x, facing) => ({ type: "walk", x, facing }),
-  reach: (pt) => ({ type: "reach", pt }),
+  reach: (pt, pointer = null) => ({ type: "reach", pt, pointer }),
   trace: (mark, index) => ({ type: "trace", mark, index, along: 0 }),
+  write: (mark) => ({ type: "write", mark, t: 0 }),
   say: (text, seconds = 1.4) => ({ type: "say", text, seconds }),
   wait: (seconds) => ({ type: "wait", seconds }),
   rest: () => ({ type: "rest" }),
@@ -238,10 +253,21 @@ function goTo(n) {
 function pointAt(n, label) {
   const spot = standSpot(n);
   const shoulder = { x: spot.x, y: shoulderOf(state.man).y };
-  // Stop the fingertip a little short of the number so it doesn't cover it
+  // The hand stops short of the number; the pointer stick covers the rest of the gap
   const d = dist(n, shoulder);
-  const tip = { x: n.x + ((shoulder.x - n.x) / d) * 52, y: n.y + ((shoulder.y - n.y) / d) * 52 };
-  return [...goTo(n), steps.reach(tip), steps.say(label ?? `This is ${n.value}`), steps.wait(0.9)];
+  const gap = POINTER_LEN + 36;
+  const hand = { x: n.x + ((shoulder.x - n.x) / d) * gap, y: n.y + ((shoulder.y - n.y) / d) * gap };
+  return [...goTo(n), steps.reach(hand, n), steps.say(label ?? `This is ${n.value}`), steps.wait(0.9)];
+}
+
+// A chalk text mark that appears one character at a time
+function createTextMark(text, x, y) {
+  return { text, x, y, shown: 0, alpha: 1 };
+}
+
+function textWidth(text, font) {
+  ctx.font = font;
+  return ctx.measureText(text).width;
 }
 
 function markNumber(shape, n) {
@@ -297,6 +323,48 @@ const actions = {
     return list;
   },
 
+  // Add the last two numbers picked: point at both, write the sum, circle the answer
+  sum() {
+    const a = state.numbers[state.previous];
+    const b = current();
+    if (!a || a === b) return [steps.say("Pick two different numbers first!", 2)];
+
+    const answer = a.value + b.value;
+    const prefix = `${a.value} + ${b.value} = `;
+    const text = prefix + answer;
+    const width = textWidth(text, EQUATION_FONT);
+    const startX = 500 - width / 2;
+    const eq = createTextMark(text, startX, EQUATION_Y);
+
+    // circle around just the answer
+    const answerW = textWidth(String(answer), EQUATION_FONT);
+    const answerCenter = { x: startX + textWidth(prefix, EQUATION_FONT) + answerW / 2, y: EQUATION_Y };
+    const ring = { strokes: [ellipseStroke(answerCenter, answerW / 2 + 20, 32)], alpha: 1 };
+    ring.drawn = [0];
+    ring.lengths = ring.strokes.map(strokeLength);
+
+    return [
+      steps.status(`Adding ${a.value} + ${b.value}`),
+      ...pointAt(a, `${a.value}...`),
+      ...pointAt(b, `plus ${b.value}...`),
+      steps.walkTo(startX - 110, 1),
+      // only one equation on the board at a time
+      steps.run(() => {
+        state.marks = state.marks.filter((m) => !m.text);
+        state.marks.push(eq);
+      }),
+      steps.reach({ x: startX, y: EQUATION_Y + 14 }),
+      steps.write(eq),
+      steps.run(() => state.marks.push(ring)),
+      steps.reach(ring.strokes[0][0]),
+      steps.trace(ring, 0),
+      steps.rest(),
+      // step aside so the whole sum is visible
+      steps.walkTo(Math.min(900, startX + width + 90), -1),
+      steps.say(`${a.value} + ${b.value} = ${answer}!`, 2.2),
+    ];
+  },
+
   wave() {
     return [steps.status("Waving hello"), steps.walkTo(500, 1), steps.say("Hello! 👋", 2), steps.wave(), steps.rest()];
   },
@@ -334,8 +402,21 @@ function current() {
   return state.numbers[state.selected];
 }
 
+// Each button press adds its steps plus an "end" marker, so we can count queued actions
 function enqueue(list) {
-  state.queue.push(...list);
+  state.queue.push(...list, { type: "end" });
+  state.pending++;
+}
+
+// Stop: drop everything queued, cancel the current step and relax
+function stopAll() {
+  state.queue = [];
+  state.step = null;
+  state.pending = 0;
+  state.man.handTarget = null;
+  state.man.pointer = null;
+  state.man.bubble = null;
+  setStatus("Stopped");
 }
 
 // ---------------------------------------------------------------------------
@@ -361,6 +442,7 @@ function update(dt) {
           man.walkPhase += dt * 9;
           man.moving = true;
           man.handTarget = null; // arms relax while walking
+          man.pointer = null;
           done = false;
         } else {
           man.x = step.x;
@@ -370,8 +452,27 @@ function update(dt) {
       }
       case "reach":
         man.handTarget = step.pt;
+        man.pointer = step.pointer;
         done = dist(man.hand, step.pt) < 1;
         break;
+      case "write": {
+        // Reveal the text one character at a time; the hand follows the last letter
+        // and the stickman shuffles sideways so the end of the line stays in reach.
+        const m = step.mark;
+        step.t += dt;
+        m.shown = Math.min(m.text.length, Math.floor(step.t * 7) + 1);
+        const handX = m.x + textWidth(m.text.slice(0, m.shown), EQUATION_FONT);
+        man.handTarget = { x: handX, y: m.y + 14 + Math.sin(step.t * 30) * 3 };
+        man.hand = moveTowards(man.hand, man.handTarget, HAND_SPEED * dt);
+        const wantX = handX - 110;
+        if (Math.abs(wantX - man.x) > 1) {
+          man.x += Math.sign(wantX - man.x) * Math.min(Math.abs(wantX - man.x), WALK_SPEED * dt);
+          man.walkPhase += dt * 9;
+          man.moving = true;
+        }
+        done = m.shown >= m.text.length && step.t * 7 >= m.text.length + 2;
+        break;
+      }
       case "trace": {
         // The hand follows the stroke while the chalk line grows behind it
         step.along = Math.min(step.along + CHALK_SPEED * dt, step.mark.lengths[step.index]);
@@ -390,6 +491,7 @@ function update(dt) {
         break;
       case "rest":
         man.handTarget = null;
+        man.pointer = null;
         done = dist(man.hand, restHand(man)) < 2;
         break;
       case "wave": {
@@ -411,19 +513,23 @@ function update(dt) {
       case "status":
         setStatus(step.text);
         break;
+      case "end":
+        state.pending = Math.max(0, state.pending - 1);
+        break;
     }
     if (done) state.step = null;
   }
 
   // Ease the hand toward its target (or back to rest)
-  if (!step || (step.type !== "trace" && step.type !== "wave")) {
+  if (!step || (step.type !== "trace" && step.type !== "wave" && step.type !== "write")) {
     const target = man.handTarget || restHand(man);
     man.hand = moveTowards(man.hand, target, HAND_SPEED * dt);
   }
   if (!man.moving) man.walkPhase *= 0.85; // settle the legs when standing
 
   if (man.bubble && state.time > man.bubble.until) man.bubble = null;
-  if (!state.step && !state.queue.length) setStatus("Ready");
+  if (!state.step && !state.queue.length && state.statusText !== "Stopped") setStatus("Ready");
+  renderStatus();
 }
 
 // ---------------------------------------------------------------------------
@@ -463,8 +569,18 @@ function drawBoard() {
 function drawNumbers() {
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.font = "bold 64px 'Comic Sans MS', 'Chalkboard SE', 'Segoe Print', cursive";
+  ctx.font = CHALK_FONT;
   state.numbers.forEach((n, i) => {
+    if (i === state.previous && i !== state.selected) {
+      // faint ring on the previously picked number (the first number for Sum)
+      ctx.strokeStyle = "rgba(255, 230, 120, 0.35)";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 6]);
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, 44, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
     if (i === state.selected) {
       // soft glow behind the selected number
       const glow = ctx.createRadialGradient(n.x, n.y, 5, n.x, n.y, 60);
@@ -482,6 +598,15 @@ function drawMarks() {
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   state.marks.forEach((mark) => {
+    if (mark.text) {
+      // written text (e.g. "3 + 4 = 7"), revealed character by character
+      ctx.font = EQUATION_FONT;
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = `rgba(250, 250, 240, ${0.92 * mark.alpha})`;
+      ctx.fillText(mark.text.slice(0, mark.shown), mark.x, mark.y);
+      return;
+    }
     mark.strokes.forEach((pts, i) => {
       const drawn = mark.drawn[i];
       if (drawn <= 0) return;
@@ -547,8 +672,26 @@ function drawStickman() {
   const arm = solveArm(shoulder, man.hand, BODY.upperArm, BODY.foreArm, man.facing);
   limb(shoulder, arm.elbow, arm.hand);
 
+  // teacher's pointer stick, aimed from the hand at the number
+  if (man.pointer) {
+    const n = man.pointer;
+    const d = dist(arm.hand, n) || 1;
+    const len = Math.min(POINTER_LEN + 6, d - 30);
+    if (len > 0) {
+      ctx.strokeStyle = "#8a5a2b";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(arm.hand.x, arm.hand.y);
+      ctx.lineTo(arm.hand.x + ((n.x - arm.hand.x) / d) * len, arm.hand.y + ((n.y - arm.hand.y) / d) * len);
+      ctx.stroke();
+      ctx.strokeStyle = "#1d1d1d";
+    }
+  }
+
   // chalk in the hand while working on the board
-  if (state.step && (state.step.type === "trace" || state.step.type === "reach")) {
+  const working = state.step && ["trace", "write"].includes(state.step.type);
+  const reachingToDraw = state.step && state.step.type === "reach" && !state.step.pointer;
+  if (working || reachingToDraw) {
     ctx.fillStyle = "#fafaf0";
     ctx.beginPath();
     ctx.arc(arm.hand.x, arm.hand.y, 4, 0, Math.PI * 2);
@@ -657,6 +800,13 @@ const chipsEl = document.getElementById("chips");
 const statusEl = document.getElementById("status");
 
 function setStatus(text) {
+  state.statusText = text;
+}
+
+// Status line: current action plus how many more are waiting
+function renderStatus() {
+  const waiting = state.pending - 1;
+  const text = waiting > 0 ? `${state.statusText} · ${waiting} more queued` : state.statusText;
   if (statusEl.textContent !== text) statusEl.textContent = text;
 }
 
@@ -664,7 +814,7 @@ function renderChips() {
   chipsEl.innerHTML = "";
   state.numbers.forEach((n, i) => {
     const b = document.createElement("button");
-    b.className = "chip" + (i === state.selected ? " selected" : "");
+    b.className = "chip" + (i === state.selected ? " selected" : i === state.previous ? " previous" : "");
     b.textContent = n.value;
     b.setAttribute("aria-pressed", i === state.selected);
     b.addEventListener("click", () => select(i));
@@ -672,7 +822,9 @@ function renderChips() {
   });
 }
 
+// Remember the previous pick too, so Sum can add the last two numbers chosen
 function select(i) {
+  if (i !== state.selected) state.previous = state.selected;
   state.selected = i;
   renderChips();
 }
@@ -680,6 +832,8 @@ function select(i) {
 document.querySelectorAll("[data-action]").forEach((btn) => {
   btn.addEventListener("click", () => enqueue(actions[btn.dataset.action]()));
 });
+
+document.getElementById("stop").addEventListener("click", stopAll);
 
 // Click a number on the board to select it
 canvas.addEventListener("click", (e) => {

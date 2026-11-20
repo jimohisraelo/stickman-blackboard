@@ -9,7 +9,7 @@
 <body>
   <header>
     <h1>Stickman Teacher</h1>
-    <p>Pick a number (click it on the board or use the chips), then choose an action.</p>
+    <p>Pick a number (click it on the board or use the chips), then choose an action. For Sum, pick two numbers one after the other.</p>
   </header>
 
   <main>
@@ -35,6 +35,7 @@
       <div class="row">
         <span class="label">Extras</span>
         <div class="buttons">
+          <button data-action="sum">➕ Sum last two picked</button>
           <button data-action="count">🔢 Count all</button>
           <button data-action="largest">🏆 Circle largest</button>
           <button data-action="evens">2️⃣ Tick even numbers</button>
@@ -44,7 +45,10 @@
         </div>
       </div>
 
-      <p id="status" class="status" aria-live="polite">Ready</p>
+      <div class="status-row">
+        <p id="status" class="status" aria-live="polite">Ready</p>
+        <button id="stop" class="stop">⏹ Stop</button>
+      </div>
     </section>
   </main>
 
