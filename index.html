@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Stickman Teacher</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>Stickman Teacher</h1>
+    <p>Pick a number (click it on the board or use the chips), then choose an action.</p>
+  </header>
+
+  <main>
+    <canvas id="stage" width="1000" height="560" aria-label="Stickman standing in front of a blackboard with numbers"></canvas>
+
+    <section class="panel">
+      <div class="row">
+        <span class="label">Number</span>
+        <div id="chips" class="chips"></div>
+      </div>
+
+      <div class="row">
+        <span class="label">Actions</span>
+        <div class="buttons">
+          <button data-action="point">👉 Point</button>
+          <button data-action="circle">⭕ Circle</button>
+          <button data-action="underline">➖ Underline</button>
+          <button data-action="tick">✔️ Tick</button>
+          <button data-action="cross">❌ Cross out</button>
+        </div>
+      </div>
+
+      <div class="row">
+        <span class="label">Extras</span>
+        <div class="buttons">
+          <button data-action="count">🔢 Count all</button>
+          <button data-action="largest">🏆 Circle largest</button>
+          <button data-action="evens">2️⃣ Tick even numbers</button>
+          <button data-action="wave">👋 Wave</button>
+          <button data-action="erase">🧽 Erase board</button>
+          <button data-action="shuffle">🎲 New numbers</button>
+        </div>
+      </div>
+
+      <p id="status" class="status" aria-live="polite">Ready</p>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
